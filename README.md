@@ -1,5 +1,5 @@
 # PFM - patient forum miner
-# create_summaries_for_unseen_data_TNO.py
+## create_summaries_for_unseen_data_TNO.py
 
 A conversion script. It reads the json output of the semantic search engine, applies an extractive summarization model (linear model for post selection), and prints json output.
 
