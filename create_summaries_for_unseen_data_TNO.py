@@ -542,9 +542,8 @@ for thread in threads:
     summarized_threads.append(thread)
 
 
-json.dump(query_words,json_out)
-json.dump(entity_matrix,json_out)
-json.dump(summarized_threads,json_out)
+parsed_json['threads'] = summarized_threads
+json.dump(parsed_json,json_out)
 
 json_out.close()
 
