@@ -1,5 +1,5 @@
 # coding=utf-8
-# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json example_query_result_full_threads.summary.json
+# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json
 
 
 # + 1. Read json file (query+result list), and extract threads
