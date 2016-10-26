@@ -1,5 +1,6 @@
 # coding=utf-8
-# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json
+# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json Dutch_model.json
+# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json English_model.json
 
 
 # + 1. Read json file (query+result list), and extract threads
@@ -14,45 +15,68 @@
 import sys
 import re
 import string
-import operator
 import functools
+import operator
 import numpy
-from scipy.linalg import norm
 import json
+from scipy import sparse
+import scipy
+from scipy.linalg import norm
+from sklearn.metrics.pairwise import cosine_similarity
+import time
 
 json_filename = sys.argv[1]
 outfilename = sys.argv[2]
+modelfilename = sys.argv[3]
 
 feat_weights = dict()
-feat_weights["abspos"] = -0.69456
-feat_weights["relpos"] = -0.17991
-feat_weights["noresponses"] = -0.11507
-feat_weights["noofupvotes"] = 0 # not in viva data
-feat_weights["cosinesimwthread"] = 0.32817
-feat_weights["cosinesimwtitle"] = 0.13588
-feat_weights["wordcount"] = -1.44997
-feat_weights["uniquewordcount"] = 1.90478
-feat_weights["ttr"] = -0.38033
-feat_weights["relpunctcount"] = -0.12664
-feat_weights["avgwordlength"] = 0.18753
-feat_weights["avgsentlength"] = 0 # not significant
-feat_weights["relauthorcountsinthread"] =  -0.11927
 
-intercept = 2.45595
+json_config_string = ""
+with open(modelfilename,'r') as json_file:
+    for line in json_file:
+        json_config_string += line.rstrip()
+parsed_json_config = json.loads(json_config_string)
 
-#(Intercept)              2.45595    0.03381  72.646  < 2e-16 ***
-#abspos                  -0.69456    0.07358  -9.440  < 2e-16 ***
-#relpos                  -0.17991    0.07159  -2.513 0.012025 *
-#noresponses             -0.11507    0.03386  -3.399 0.000686 ***
-#cosinesimwthread         0.32817    0.07379   4.447 9.02e-06 ***
-#cosinesimwtitle          0.13588    0.03523   3.857 0.000117 ***
-#wordcount               -1.44997    0.17763  -8.163 4.81e-16 ***
-#uniquewordcount          1.90478    0.19878   9.582  < 2e-16 ***
-#ttr                     -0.38033    0.06543  -5.813 6.81e-09 ***
-#relpunctcount           -0.12664    0.03995  -3.170 0.001541 **
-#avgwordlength            0.18753    0.04156   4.512 6.67e-06 ***
-#avgsentlength           -0.01406    0.04058  -0.347 0.728958
-#relauthorcountsinthread -0.11927    0.03410  -3.498 0.000476 ***
+#print (parsed_json_config)
+
+levels = []
+feat_weights_per_level = dict() # key is 'post' or 'sentence', value is dict with feature weights for that level
+feat_names_per_level = dict() # key is 'post' or 'sentence', value is list with feature names for that level
+threshold_per_level = dict()
+
+for model_definition in parsed_json_config:
+    print (model_definition)
+    language = model_definition['language']
+    threshold = model_definition['threshold']
+
+    level = model_definition['level']
+    levels.append(level)
+    threshold_per_level[level] = threshold
+
+    linear_model = model_definition['model']
+
+    print ("\nMODEL:",model_definition['comment'])
+    #featnames = ["threadid","postid"]
+    featnames = []
+
+    for var in linear_model:
+        if var != "Intercept":
+            featnames.append(var)
+        beta = linear_model[var]['beta']
+        p = linear_model[var]['p']
+        print (var,beta,p)
+        if float(p) > 0.05:
+            beta=0
+        feat_weights[var] = float(beta)
+
+    intercept = feat_weights['Intercept']
+
+    print ("features",featnames)
+    feat_names_per_level[level] = featnames
+    feat_weights_per_level[level] = feat_weights
+
+
+
 
 def tokenize(t):
     text = t.lower()
@@ -122,16 +146,20 @@ def nrofsyllables(w):
     return count
 
 
-# noinspection PyUnresolvedReferences
 def fast_cosine_sim(a, b):
     #print (a)
+
     if len(b) < len(a):
         a, b = b, a
+
+
     up = 0
     a_value_array = []
     b_value_array = []
     for key in a:
+        # noinspection PyUnresolvedReferences
         a_value = a[key]
+        # noinspection PyUnresolvedReferences
         b_value = b[key]
         a_value_array.append(a_value)
         b_value_array.append(b_value)
@@ -140,21 +168,12 @@ def fast_cosine_sim(a, b):
         return 0
     return up / norm(a_value_array) / norm(b_value_array)
 
+def alternative_cosine_sim(a,b):
+    v1 = scipy.sparse.csr_matrix(a)
+    v2 = scipy.sparse.csr_matrix(b)
+    similarities_sparse = cosine_similarity(v1,v2,dense_output=False)
+    return similarities_sparse
 
-
-
-columns = dict() # key is feature name, value is dict with key (threadid,postid) and value the feature value
-
-def addvaluestocolumnsoverallthreads(dictionary,feature):
-    global columns
-    columndict = dict()
-    if feature in columns: # if this is not the first thread, we already have a columndict for this feature
-        columndict = columns[feature] # key is (threadid,postid) and value the feature value
-    for (threadid,postid) in dictionary:
-        value = dictionary[(threadid,postid)]
-        columndict[(threadid,postid)] = value
-    #print feature, columndict
-    columns[feature] = columndict
 
 def standardize_values(columndict,feature):
     values = list()
@@ -217,7 +236,7 @@ def findQuote (content,thread_id) :
     return referred_post
 
 '''
-MAIN: READ JSON AND EXTRACT FEATURES
+#MAIN: READ JSON AND EXTRACT FEATURES
 '''
 
 openingpost_for_thread = dict() # key is threadid, value is id of opening post
@@ -244,10 +263,13 @@ readabilities = dict() # key is (threadid,postid), value is readability
 bodies = dict()  # key is (threadid,postid), value is content of post
 op_source_strings = dict() # key is threadid, value is the value of the 'source' field of the opening post
 post_source_strings = dict() # key is (threadid,postid), value is the value of the 'source' field of the comment
-
-featnames = ("threadid","postid","abspos","relpos","noresponses","noofupvotes","cosinesimwthread","cosinesimwtitle","wordcount","uniquewordcount","ttr","relpunctcount","avgwordlength","avgsentlength","relauthorcountsinthread")
-
-
+sentlengths_sent = dict() # key is (threadid, sentid), value is length of sentence
+abspositions_sent = dict() # key is (threadid, sentid), value is absolute position of sentence in post
+relpositions_sent = dict() # key is (threadid, sentid), value is relative  position of sentence in post
+cosinesimilaritiesthread_sent = dict() # key is (threadid,sentid), value is cossim with term vector for complete thread
+cosinesimilaritiestitle_sent = dict() # key is (threadid,sentid), value is cossim with term vector for title
+sentids_per_post = dict() #key is (threadid,postid), value is array of sentence ids
+sentence_texts = dict() #key is (threadid,sid), value is sentence text
 #print time.clock(), "\t", "go through files"
 
 json_string = ""
@@ -261,21 +283,44 @@ parsed_json = json.loads(json_string)
 query_words = parsed_json['query_words']
 entity_matrix = parsed_json['entity_matrix']
 threads = parsed_json['threads']
+print ("number of threads:",len(threads))
 
 json_out = open(outfilename, 'w')
 summarized_threads = []
 
+threads_small = threads[0:5]
+
 for thread in threads:
-    termvectors = dict()  # key is postid, value is dict with term -> termcount for post
-    termvectorforthread = dict()  # key is term, value is termcount for full thread
-    termvectorfortitle = dict()  # key is term, value is termcount for title
+#for thread in threads:
+
+    dictionary = dict() # key is word. used as dimensions in term vectors
+
+    termcounts_per_post = dict()  # key is postid, value is dictionary with term -> count
+    #termvectorforthread = dict()  # key is term, value is termcount for full thread
+    #termvectorfortitle = dict()  # key is term, value is termcount for title
     authorcountsinthread = dict()  # key is authorid, value is number of posts by author in this thread
     post_per_postid = dict() # key is postid, value is complete post dictionary (needed for printing)
+
     #print(thread)
     threadid = thread['thread_id']
+
+    print ("\n",time.clock(), "\t", threadid)
+    print (">>Feature extraction")
+
     title = ""
     if 'thread_title' in thread:
         title = thread['thread_title']
+        titlewords = tokenize(title)
+        titledict = dict()
+        for tw in titlewords:
+            if tw in dictionary: # dictionary over all content
+                dictionary[tw] += 1
+            else:
+                dictionary[tw] = 1
+            if tw in titledict:
+                titledict[tw] += 1
+            else:
+                titledict[tw] = 1
     print(threadid,title)
     thread_content = thread['content']
     openingpost = thread_content['message']
@@ -290,7 +335,6 @@ for thread in threads:
     postsforthread = dict()
     if threadid in postsperthread:
         postsforthread = postsperthread[threadid]
-    postsforthread[(author_of_openingpost,timestamp_of_openingpost)] = postid_of_openingpost
     postsperthread[threadid] = postsforthread
 
     # In the TNO json, the msg_id of the opening post is equal to the threadid
@@ -319,6 +363,7 @@ for thread in threads:
         postsperthread[threadid] = postsforthread
 
     postcount = 0
+    print (time.clock(), "\t", "extract feats from each post")
     for post in posts:
         # then go through the thread again to calculate all feature values
         postcount += 1
@@ -366,17 +411,76 @@ for thread in threads:
 
         bodies[(threadid,postid)] = body
 
-        words = tokenize(body)
-        wc = len(words)
+        postwords = tokenize(body)
+        wc = len(postwords)
 
         sentences = split_into_sentences(body)
         sentlengths = list()
 
+        sentids_for_this_post = []
+        sid = 0
         for s in sentences:
+
+            # calculate separate sentence feature values
+            sentid = postid+'_s'+str(sid)
+            sentids_for_this_post.append(sentid)
+            sentence_texts[(threadid,sentid)] = s
+            threadids[(threadid,sentid)] = threadid
+            postids_dict[(threadid,sentid)] = sentid
             sentwords = tokenize(s)
             nrofwordsinsent = len(sentwords)
-            #print (s, nrofwordsinsent)
+            sentlengths_sent[(threadid,sentid)] = nrofwordsinsent
+            abspos_sent = sid+1
+            abspositions_sent[(threadid,sentid)] = abspos_sent
+            relpos_sent = abspos_sent/len(sentences)
+            relpositions_sent[(threadid,sentid)] = relpos_sent
+
+            sentwords = tokenize(s)
+            worddict_sent = dict()
+            worddict_post = dict()
+            if sentid in termcounts_per_post:
+                worddict_sent = termcounts_per_post[sentid]
+            if postid in termcounts_per_post:
+                worddict_post = termcounts_per_post[postid]
+            uniquewords = dict()
+            wordlengths = list()
+            for word in sentwords:
+                uniquewords[word] = 1
+                wordlengths.append(len(word))
+
+                if word in worddict_sent:
+                    worddict_sent[word] += 1
+                else:
+                    worddict_sent[word] = 1
+                if word in worddict_post:
+                    worddict_post[word] += 1
+                else:
+                    worddict_post[word] = 1
+
+                if word in dictionary: # dictionary over all content
+                    dictionary[word] += 1
+                else:
+                    dictionary[word] = 1
+            termcounts_per_post[sentid] = worddict_sent
+            termcounts_per_post[postid] = worddict_post
+            #print (sentid,termcounts_per_post[sentid])
+            #print (postid,termcounts_per_post[postid])
+
+
+            wordcounts[(threadid,sentid)] = len(sentwords)
+            uniquewordcounts[(threadid,sentid)] = len(uniquewords)
+            typetokenratio = 0
+            if wordcounts[(threadid,sentid)] > 0:
+                typetokenratio = float(len(uniquewords)) / float(wordcounts[(threadid,sentid)])
+                avgwordlengths[(threadid,postid)] = numpy.mean(wordlengths)
+            typetokenratios[(threadid,sentid)] = typetokenratio
+            relpunctcounts[(threadid,sentid)] = count_punctuation(s)
+
+            #print s, nrofwordsinsent
             sentlengths.append(nrofwordsinsent)
+            sid +=1
+        #print (threadid,postid,sentids_for_this_post)
+        sentids_per_post[(threadid,postid)] = sentids_for_this_post
         if len(sentences) > 0:
             avgsentlength = numpy.mean(sentlengths)
             avgsentlengths[(threadid,postid)] = avgsentlength
@@ -389,24 +493,12 @@ for thread in threads:
         uniquewords = dict()
         wordlengths = list()
         nrofsyllablesinwords = list()
-        for word in words:
+        worddict = dict()
+        for word in postwords:
             #print (word, nrofsyllables(word))
             nrofsyllablesinwords.append(nrofsyllables(word))
             wordlengths.append(len(word))
             uniquewords[word] = 1
-            if word in termvectorforthread:  # dictionary over all posts
-               termvectorforthread[word] += 1
-            else:
-               termvectorforthread[word] = 1
-
-            worddict = dict()
-            if postid in termvectors:
-                worddict = termvectors[postid]
-            if word in worddict:
-                worddict[word] += 1
-            else:
-                worddict[word] = 1
-            termvectors[postid] = worddict
 
         uniquewordcount = len(uniquewords)
         uniquewordcounts[(threadid,postid)] = uniquewordcount
@@ -436,56 +528,106 @@ for thread in threads:
         #abspositions[(threadid,postid)] = postid
 
     # add zeroes for titleterms that are not in the thread vector
-    titlewords = tokenize(title)
-    for tw in titlewords:
-        if tw in termvectorfortitle:
-            termvectorfortitle[tw] += 1
-        else:
-            termvectorfortitle[tw] = 1
+    print (time.clock(), "\t", "create term vectors")
 
-    for titleword in termvectorfortitle:
-        if titleword not in termvectorforthread:
-            termvectorforthread[titleword] = 0
+    dictionary_vector = [] # vector with words.
+    termvectorforthread = []
+    termvectorfortitle = []
+    for term in dictionary:
+        if dictionary[term] > 0:
+            dictionary_vector.append(term)
+            termvectorforthread.append(dictionary[term])
+            if term in titledict:
+                termvectorfortitle.append(titledict[term])
+            else:
+                termvectorfortitle.append(0)
 
-    # add zeroes for terms that are not in the title vector:
-    for word in termvectorforthread:
-        if word not in termvectorfortitle:
-            termvectorfortitle[word] = 0
+    #termvectorforthread = sparse.csr_matrix(termvectorforthread)
+    #termvectorfortitle = sparse.csr_matrix(termvectorfortitle)
+    #print ("thread:",termvectorforthread, len(termvectorforthread))
+    #print ("title",termvectorfortitle, len(termvectorfortitle))
 
     # add zeroes for terms that are not in the post vector:
-    for postid in termvectors:
-        worddictforpost = termvectors[postid]
-        for word in termvectorforthread:
-            if word not in worddictforpost:
-                worddictforpost[word] = 0
-        termvectors[postid] = worddictforpost
+    termvectors = dict() # key is postid, value is term vector
+    for postid in termcounts_per_post:
+        #print (postid)
+        worddictforpost = termcounts_per_post[postid]
+        termvectorforpost = []
+        for term in dictionary_vector:
+            if term in worddictforpost:
+                termvectorforpost.append(worddictforpost[term])
+            else:
+                termvectorforpost.append(0)
 
-        cossimthread = fast_cosine_sim(termvectors[postid], termvectorforthread)
-        cossimtitle = fast_cosine_sim(termvectors[postid], termvectorfortitle)
-        cosinesimilaritiesthread[(threadid,postid)] = cossimthread
-        cosinesimilaritiestitle[(threadid,postid)] = cossimtitle
-        #print(title,postid,cossimtitle)
+        #termvectors[postid] = sparse.csr_matrix(termvectorforpost)
+        termvectors[postid] = termvectorforpost
+
+        #print (time.clock(), "\t", "calculate cossim for",postid,"dimensionality is",len(termvectors[postid]))
+
+    print (time.clock(), "\t", "calculate cosine similarities")
+    for postid in termvectors:
+        if "_s" in postid:
+            # calculate cossim for sentence itself
+            cossimthread_sent = fast_cosine_sim(termvectors[postid], termvectorforthread)
+            #cossimthread_sent = alternative_cosine_sim(termvectors[postid], termvectorforthread)
+            cossimtitle_sent = fast_cosine_sim(termvectors[postid], termvectorfortitle)
+            #cossimtitle_sent = alternative_cosine_sim(termvectors[postid], termvectorfortitle)
+
+            cosinesimilaritiesthread_sent[(threadid,postid)] = cossimthread_sent
+            cosinesimilaritiestitle_sent[(threadid,postid)] = cossimtitle_sent
+            #print (postid,termvectors[postid],cossimthread_sent)
+            #postid_for_sentid = re.sub("_s[0-9]+","",postid)
+            #print (postid,postid_for_sentid)
+            # and add the cossim of the post it is embedded in as separate feature
+            #cossimthread = fast_cosine_sim(termvectors[postid_for_sentid], termvectorforthread)
+            #cossimtitle = fast_cosine_sim(termvectors[postid_for_sentid], termvectorfortitle)
+            #cosinesimilaritiesthread[(threadid,postid)] = cossimthread
+            #cosinesimilaritiestitle[(threadid,postid)] = cossimtitle
+        else:
+            # if postid is not a sentence then only calculate the cossim for the postid
+            cossimthread = fast_cosine_sim(termvectors[postid], termvectorforthread)
+            cossimtitle = fast_cosine_sim(termvectors[postid], termvectorfortitle)
+            cosinesimilaritiesthread[(threadid,postid)] = cossimthread
+            cosinesimilaritiestitle[(threadid,postid)] = cossimtitle
 
     for postid in postidsforthread:
-        if not (threadid,postid) in responsecounts:
-            responsecounts[(threadid,postid)] = 0
         if not (threadid,postid) in cosinesimilaritiesthread:
             cosinesimilaritiesthread[(threadid,postid)] = 0.0
         if not (threadid,postid) in cosinesimilaritiestitle:
             cosinesimilaritiestitle[(threadid,postid)] = 0.0
+        sentids_for_this_post = sentids_per_post[(threadid,postid)]
+        #print(threadid,postid,sentids_for_this_post)
+        for sentid in sentids_for_this_post:
+            if not (threadid,sentid) in cosinesimilaritiesthread_sent:
+                cosinesimilaritiesthread_sent[(threadid,postid)] = 0.0
+            if not (threadid,sentid) in cosinesimilaritiestitle_sent:
+                cosinesimilaritiestitle_sent[(threadid,postid)] = 0.0
         if not (threadid,postid) in responsecounts:
-            responsecounts[(threadid,postid)] = 0
+            # don't store the counts for the openingpost
+            #print ("postid not in responsecounts", postid, "opening post:", openingpost_for_thread[threadid])
+            responsecounts[(threadid,postid)] = 0.0
+        #else:
+            #print ("postid in responsecounts",threadid,postid,responsecounts[(threadid,postid)])
 
+    print (time.clock(), "\t", "standardize feat values")
     columns_for_thread = dict()
+    columns_for_thread.clear()
     columns_for_thread["threadid"] = threadids
     columns_for_thread["postid"] = postids_dict
-
-    columns_for_thread["abspos"] = abspositions
+    columns_for_thread["abspos_post"] = abspositions
+    columns_for_thread["relpos_post"] = relpositions
+    columns_for_thread["abspos"] = abspositions  # these two are equal to the two above but the post model has different feature names
     columns_for_thread["relpos"] = relpositions
+    columns_for_thread["abspos_sent"] = abspositions_sent
+    columns_for_thread["relpos_sent"] = relpositions_sent
     columns_for_thread["noresponses"] = responsecounts
     columns_for_thread["noofupvotes"] = upvotecounts
+    columns_for_thread["cosinesimwthread_post"] = cosinesimilaritiesthread # these two are equal to the two above but the post model has different feature names
+    columns_for_thread["cosinesimwtitle_post"] = cosinesimilaritiestitle
     columns_for_thread["cosinesimwthread"] = cosinesimilaritiesthread
     columns_for_thread["cosinesimwtitle"] = cosinesimilaritiestitle
+    columns_for_thread["cosinesimwthread_sent"] = cosinesimilaritiesthread_sent
+    columns_for_thread["cosinesimwtitle_sent"] = cosinesimilaritiestitle_sent
     columns_for_thread["wordcount"] = wordcounts
     columns_for_thread["uniquewordcount"] = uniquewordcounts
     columns_for_thread["ttr"] = typetokenratios
@@ -495,43 +637,120 @@ for thread in threads:
     columns_for_thread["relauthorcountsinthread"] = relauthorcountsinthreadforpost
 
     columns_std = dict()
-    for featurename in featnames:
-        columndict = columns_for_thread[featurename]
+    for sum_level in levels:
+        featnames = feat_names_per_level[sum_level]
+        for featurename in featnames:
+            if featurename in columns_for_thread:
+                columndict = columns_for_thread[featurename]
 
-        columndict_with_std_values = columndict
-        if featurename != "postid" and featurename != "threadid":
-            columndict_with_std_values = standardize_values(columndict,featurename)
-        columns_std[featurename] = columndict_with_std_values
-        #print (featurename,columns_std[featurename])
+                columndict_with_std_values = columndict
+                if featurename != "postid" and featurename != "threadid":
+                    columndict_with_std_values = standardize_values(columndict,featurename)
+                columns_std[featurename] = columndict_with_std_values
+            else:
+                print ("Feature from model has not been stored as column in the data:",featurename)
+            #print (featurename,columns_std[featurename])
 
 
 #    predicted = dict()
 #    include = dict()
 
-    posts_with_decision = []
+
+    print (">>Summarization")
+    print (time.clock(), "\t", "summarize")
+    posts_with_decision = list()
     for postid in postidsforthread:
-        #print (threadid,postid)
+        '''
+        # first, summarize on the sentence level
+        '''
+
+        level = 'sentence'
+        featnames = feat_names_per_level[level]
+        feat_weights = feat_weights_per_level[level]
+
+        sentence_information = list()
+        sentids_for_this_post = sentids_per_post[(threadid,postid)]
+        #print (threadid,postid,sentids_for_this_post)
+        for sentid in sentids_for_this_post:
+            #print (threadid,postid,sentid)
+
+            predicted_outcome = intercept
+            sentence_information_for_this_sentence = dict()
+            for featurename in featnames:
+                if featurename in columns_std:
+
+                    columndict_with_std_values = columns_std[featurename]
+                    #print(featurename, columndict_with_std_values)
+                    value = 0
+                    if (threadid,sentid) in columndict_with_std_values:
+                        value = columndict_with_std_values[(threadid,sentid)]
+                    else:
+                        postid_for_sentid = re.sub("_s[0-9]+","",sentid)
+                        if (threadid,postid_for_sentid) in columndict_with_std_values:
+                            value = columndict_with_std_values[(threadid,postid_for_sentid)]
+                        else:
+                            print ("sentence id",sentid,"and postid",postid, "are not in the columndict for feature",featurename)
+                    if featurename in feat_weights:
+                        weighted_value = feat_weights[featurename]*value
+                        predicted_outcome += weighted_value
+                    else:
+                        print("featurename not in lrm model:",featurename)
+                    #predicted[(threadid,postid)] = predicted_outcome
+                else:
+                    print(("Feature from model has not been stored as column in the standardized data:",featurename))
+
+            include = 0
+            if predicted_outcome > threshold_per_level[level]:
+                include = 1
+
+            sentence_information_for_this_sentence['summary_include'] = include
+            sentence_information_for_this_sentence['sentid'] = sentid
+            sentence_information_for_this_sentence['summary_predicted'] = predicted_outcome
+            sentence_information_for_this_sentence['sentence'] = sentence_texts[(threadid,sentid)]
+            #print (threadid,sentid,include)
+
+            #sentence_information[sentid] = sentence_information_for_this_sentence
+            sentence_information.append(sentence_information_for_this_sentence)
+        post = post_per_postid[postid]
+        #print (postid,post)
+        post['text'] = sentence_information
+
+        '''
+        # then, summarize on the post level
+        '''
+
+        level = 'post'
+        featnames = feat_names_per_level[level]
+        feat_weights = feat_weights_per_level[level]
+
         post = post_per_postid[postid]
         predicted_outcome = intercept
 
         for featurename in featnames:
-            #print (featurename)
-            columndict_with_std_values = columns_std[featurename]
-            value = columndict_with_std_values[(threadid,postid)]
-            if featurename in feat_weights:
-                weighted_value = feat_weights[featurename]*value
-                predicted_outcome += weighted_value
-            #predicted[(threadid,postid)] = predicted_outcome
+            if featurename in columns_std:
+
+                columndict_with_std_values = columns_std[featurename]
+                #print(featurename, columndict_with_std_values)
+                value = columndict_with_std_values[(threadid,postid)]
+
+                if featurename in feat_weights:
+                    weighted_value = feat_weights[featurename]*value
+                    predicted_outcome += weighted_value
+                else:
+                    print("featurename not in lrm model:",featurename)
+                #predicted[(threadid,postid)] = predicted_outcome
+            else:
+                print(("Feature from model has not been stored as column in the standardized data:",featurename))
         post['summary_predicted'] = predicted_outcome
-        #print(threadid,postid,predicted_outcome)
-        if predicted_outcome >= 3.72:
-            # fixed threshold, based on tune set 5 from viva data
-            #include[(threadid,postid)] = 1
-            post['summary_include'] = 1
-        else:
-            #include[(threadid,postid)] = 0
-            post['summary_include'] = 0
+
+        include = 0
+        if predicted_outcome >= threshold_per_level[level]:
+            include = 1
+        post['summary_include'] = 1
+        #print(threadid,postid,include)
+
         #print(postid,post)
+
         posts_with_decision.append(post)
 
     openingpost['summary_predicted'] = 1 # always include the opening post in the summary
@@ -540,6 +759,7 @@ for thread in threads:
     thread_content['comments'] = posts_with_decision
     thread['content'] = thread_content
     summarized_threads.append(thread)
+    print (time.clock(), "\t", "thread summarized")
 
 
 parsed_json['threads'] = summarized_threads
