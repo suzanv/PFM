@@ -1,6 +1,5 @@
 [{
   "level": "sentence",
-  "threshold": 1.00,
   "language": "English",
   "comment": "English sentence model trained on crowd-sourced GIST FB summaries",
   "date": "2016-10-25",
@@ -51,7 +50,6 @@
   "level": "post",
   "language": "Dutch",
   "comment": "Dutch post-level model trained on crowd-sourced Viva forum summaries (because we don't have an English post-level model)",  
-  "threshold": 3.72,
   "date": "2016-10-26",
   "model": {
     "Intercept": {

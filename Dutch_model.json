@@ -1,6 +1,5 @@
 [{
   "level": "sentence",
-  "threshold": 0.637,
   "language": "Dutch",
   "comment": "Dutch sentence model trained on expert GIST NL summaries",  
   "date": "2016-10-25",
@@ -51,7 +50,6 @@
   "level": "post",
   "language": "Dutch",
   "comment": "Dutch post-level model trained on crowd-sourced Viva forum summaries",
-  "threshold": 3.72,
   "date": "2016-10-26",
   "model": {
     "Intercept": {
