@@ -2,14 +2,13 @@
 # python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json Dutch_model.json
 # python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json English_model.json
 
-
-# + 1. Read json file (query+result list), and extract threads
-# + 2. For each thread in result list, extract post feats
-# + 3. Standardize post feats
-# + 4. Apply linear model
-# + 5. Apply threshold
-# + 6. Write to json file with for each thread, for each postid the value 1 or 0 for in/out summary, and the predicted value of the linear model
-
+#0. Read the config file with models and thresholds (json, 3rd argument)
+#1. Read json output of semantic search engine (query+result list), and extract threads
+#2. For each thread in result list, extract post feats and sentence feats
+#3. Standardize features
+#4. Apply linear models
+# [[ 5. Apply thresholds ]] Removed from this version -> thresholding should be defined in the interface because there are large differences between dataset what a good threshold is
+#6. Write to json file with for each thread, for each postid and for each sentence the value 1 or 0 for in/out summary, and the predicted value of the linear model.
 
 
 import sys
@@ -42,16 +41,16 @@ parsed_json_config = json.loads(json_config_string)
 levels = []
 feat_weights_per_level = dict() # key is 'post' or 'sentence', value is dict with feature weights for that level
 feat_names_per_level = dict() # key is 'post' or 'sentence', value is list with feature names for that level
-threshold_per_level = dict()
+#threshold_per_level = dict()
 
 for model_definition in parsed_json_config:
     print (model_definition)
     language = model_definition['language']
-    threshold = model_definition['threshold']
+    #threshold = model_definition['threshold']
 
     level = model_definition['level']
     levels.append(level)
-    threshold_per_level[level] = threshold
+    #threshold_per_level[level] = threshold
 
     linear_model = model_definition['model']
 
@@ -147,26 +146,19 @@ def nrofsyllables(w):
 
 
 def fast_cosine_sim(a, b):
-    #print (a)
-
     if len(b) < len(a):
         a, b = b, a
 
-
     up = 0
-    a_value_array = []
-    b_value_array = []
-    for key in a:
-        # noinspection PyUnresolvedReferences
-        a_value = a[key]
-        # noinspection PyUnresolvedReferences
-        b_value = b[key]
-        a_value_array.append(a_value)
-        b_value_array.append(b_value)
+    i=0
+    for a_value in a:
+        b_value = b[i]
         up += a_value * b_value
+        i +=1
     if up == 0:
         return 0
-    return up / norm(a_value_array) / norm(b_value_array)
+    return up / norm(a) / norm(b)
+
 
 def alternative_cosine_sim(a,b):
     v1 = scipy.sparse.csr_matrix(a)
@@ -195,7 +187,7 @@ def standardize_values(columndict,feature):
 
     return normdict
 
-months_conversion = {'januari': '01', 'februari': '02', 'maart': '03', 'april': '04', 'mei': '05', 'juni': '06', 'juli': '07', 'augustus': '08', 'september': '09', 'oktober': '10', 'november': '11', 'december': '12', 'May': '05'}
+months_conversion = {'januari': '01', 'februari': '02', 'maart': '03', 'april': '04', 'mei': '05', 'juni': '06', 'juli': '07', 'augustus': '08', 'september': '09', 'oktober': '10', 'november': '11', 'no7vember': '11', 'december': '12', 'May': '05'}
 postsperthread = dict() # dictionary with threadid as key and posts dictionary ((author,timestamp)->postid) as value
 
 def findQuote (content,thread_id) :
@@ -323,6 +315,8 @@ for thread in threads:
                 titledict[tw] = 1
     print(threadid,title)
     thread_content = thread['content']
+    if not 'message' in thread_content:
+        continue
     openingpost = thread_content['message']
     text_of_openingpost = openingpost['text']
     author_of_openingpost = openingpost['author']
@@ -652,13 +646,11 @@ for thread in threads:
             #print (featurename,columns_std[featurename])
 
 
-#    predicted = dict()
-#    include = dict()
-
-
     print (">>Summarization")
     print (time.clock(), "\t", "summarize")
-    posts_with_decision = list()
+    predicted_values_posts = list() # put all predicted values in a list so that we can later take the median
+    predicted_values_sents = list() # put all predicted values in a list so that we can later take the median
+
     for postid in postidsforthread:
         '''
         # first, summarize on the sentence level
@@ -671,6 +663,7 @@ for thread in threads:
         sentence_information = list()
         sentids_for_this_post = sentids_per_post[(threadid,postid)]
         #print (threadid,postid,sentids_for_this_post)
+
         for sentid in sentids_for_this_post:
             #print (threadid,postid,sentid)
 
@@ -699,11 +692,12 @@ for thread in threads:
                 else:
                     print(("Feature from model has not been stored as column in the standardized data:",featurename))
 
-            include = 0
-            if predicted_outcome > threshold_per_level[level]:
-                include = 1
+            predicted_values_sents.append(predicted_outcome)
+            #include = 0
+            #if predicted_outcome > threshold_per_level[level]:
+            #    include = 1
 
-            sentence_information_for_this_sentence['summary_include'] = include
+            #sentence_information_for_this_sentence['summary_include'] = include
             sentence_information_for_this_sentence['sentid'] = sentid
             sentence_information_for_this_sentence['summary_predicted'] = predicted_outcome
             sentence_information_for_this_sentence['sentence'] = sentence_texts[(threadid,sentid)]
@@ -743,13 +737,34 @@ for thread in threads:
                 print(("Feature from model has not been stored as column in the standardized data:",featurename))
         post['summary_predicted'] = predicted_outcome
 
-        include = 0
-        if predicted_outcome >= threshold_per_level[level]:
-            include = 1
-        post['summary_include'] = 1
+        predicted_values_posts.append(predicted_outcome)
+        #include = 0
+        #if predicted_outcome >= threshold_per_level[level]:
+        #    include = 1
+        #post['summary_include'] = 1
         #print(threadid,postid,include)
 
         #print(postid,post)
+
+    median_predicted_value_posts = numpy.median(predicted_values_posts)
+    median_predicted_value_sents = numpy.median(predicted_values_sents)
+    posts_with_decision = list()
+
+    for postid in postidsforthread:
+        post = post_per_postid[postid]
+        sentence_information = post['text']
+        for sentence_information_for_this_sentence in sentence_information:
+            predicted_outcome_sent = sentence_information_for_this_sentence['summary_predicted']
+            if predicted_outcome_sent > median_predicted_value_sents:
+                sentence_information_for_this_sentence['summary_include'] = 1
+            else:
+                sentence_information_for_this_sentence['summary_include'] = 0
+        post['text'] = sentence_information
+        predicted_outcome_post = post['summary_predicted']
+        if predicted_outcome_post > median_predicted_value_posts:
+            post['summary_include'] = 1
+        else:
+            post['summary_include'] = 0
 
         posts_with_decision.append(post)
 

@@ -12,7 +12,7 @@ python3 create_summary_for_unseen_data_TNO.py example_query_result_full_threads_
  + 2. For each thread in result list, extract post feats and sentence feats
  + 3. Standardize features
  + 4. Apply linear models
- + 5. Apply thresholds
+ + 5. By default, include half of the sentences (predicted value > median for sentences) and half of the posts (predicted value > median for posts)
  + 6. Write to json file with for each thread, for each postid and for each sentence the value 1 or 0 for in/out summary, and the predicted value of the linear model.
  
 
