@@ -7,7 +7,7 @@
 #2. For each thread in result list, extract post feats and sentence feats
 #3. Standardize features
 #4. Apply linear models
-# [[ 5. Apply thresholds ]] Removed from this version -> thresholding should be defined in the interface because there are large differences between dataset what a good threshold is
+#5. By default, include half of the sentences (predicted value > median for sentences) and half of the posts (predicted value > median for posts)
 #6. Write to json file with for each thread, for each postid and for each sentence the value 1 or 0 for in/out summary, and the predicted value of the linear model.
 
 
@@ -57,6 +57,7 @@ for model_definition in parsed_json_config:
     print ("\nMODEL:",model_definition['comment'])
     #featnames = ["threadid","postid"]
     featnames = []
+    feat_weights = dict()
 
     for var in linear_model:
         if var != "Intercept":
@@ -68,7 +69,7 @@ for model_definition in parsed_json_config:
             beta=0
         feat_weights[var] = float(beta)
 
-    intercept = feat_weights['Intercept']
+    #intercept = feat_weights['Intercept']
 
     print ("features",featnames)
     feat_names_per_level[level] = featnames
@@ -227,6 +228,8 @@ def findQuote (content,thread_id) :
                     #sys.stderr.write ("\n")
     return referred_post
 
+
+
 '''
 #MAIN: READ JSON AND EXTRACT FEATURES
 '''
@@ -255,7 +258,6 @@ readabilities = dict() # key is (threadid,postid), value is readability
 bodies = dict()  # key is (threadid,postid), value is content of post
 op_source_strings = dict() # key is threadid, value is the value of the 'source' field of the opening post
 post_source_strings = dict() # key is (threadid,postid), value is the value of the 'source' field of the comment
-sentlengths_sent = dict() # key is (threadid, sentid), value is length of sentence
 abspositions_sent = dict() # key is (threadid, sentid), value is absolute position of sentence in post
 relpositions_sent = dict() # key is (threadid, sentid), value is relative  position of sentence in post
 cosinesimilaritiesthread_sent = dict() # key is (threadid,sentid), value is cossim with term vector for complete thread
@@ -390,6 +392,8 @@ for thread in threads:
                 else:
                     responsecounts[(threadid,parentid)] = 1
 
+
+
         upvotes = 0
         if 'upvotes' in post:
             upvotes = int(post['upvotes']) # no upvotes in current version of json (does not exist for viva)
@@ -423,7 +427,6 @@ for thread in threads:
             postids_dict[(threadid,sentid)] = sentid
             sentwords = tokenize(s)
             nrofwordsinsent = len(sentwords)
-            sentlengths_sent[(threadid,sentid)] = nrofwordsinsent
             abspos_sent = sid+1
             abspositions_sent[(threadid,sentid)] = abspos_sent
             relpos_sent = abspos_sent/len(sentences)
@@ -659,6 +662,8 @@ for thread in threads:
         level = 'sentence'
         featnames = feat_names_per_level[level]
         feat_weights = feat_weights_per_level[level]
+        intercept = feat_weights['Intercept']
+        #print (level, feat_weights)
 
         sentence_information = list()
         sentids_for_this_post = sentids_per_post[(threadid,postid)]
@@ -683,16 +688,21 @@ for thread in threads:
                             value = columndict_with_std_values[(threadid,postid_for_sentid)]
                         else:
                             print ("sentence id",sentid,"and postid",postid, "are not in the columndict for feature",featurename)
+
                     if featurename in feat_weights:
                         weighted_value = feat_weights[featurename]*value
                         predicted_outcome += weighted_value
+                        if ":\)" in sentence_texts[(threadid,sentid)]:
+                            print (sentence_texts[(threadid,sentid)],featurename,feat_weights[featurename],value,weighted_value)
                     else:
                         print("featurename not in lrm model:",featurename)
                     #predicted[(threadid,postid)] = predicted_outcome
+
                 else:
                     print(("Feature from model has not been stored as column in the standardized data:",featurename))
 
             predicted_values_sents.append(predicted_outcome)
+
             #include = 0
             #if predicted_outcome > threshold_per_level[level]:
             #    include = 1
@@ -759,6 +769,7 @@ for thread in threads:
                 sentence_information_for_this_sentence['summary_include'] = 1
             else:
                 sentence_information_for_this_sentence['summary_include'] = 0
+            print(sentence_information_for_this_sentence['summary_include'],sentence_information_for_this_sentence['sentence'], predicted_outcome_sent)
         post['text'] = sentence_information
         predicted_outcome_post = post['summary_predicted']
         if predicted_outcome_post > median_predicted_value_posts:
