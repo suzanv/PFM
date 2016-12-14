@@ -1,6 +1,8 @@
 # coding=utf-8
-# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json Dutch_model.json
-# python3 create_summary_for_unseen_data_TNO.py json_example_query_results.new.json json_example_query_results.summary.json English_model.json
+# python3 create_summary_for_unseen_data_TNO_offline.py /Users/suzanverberne/Data/FORUM_DATA/PFM/PFM-master-b7a0eb79646b38321f9b937496cca71b62b89c5a/live_demo/gistsearch/data/viva/viva_input_data_for_elasticsearch_latest.json viva_summarized_threads/viva_summarized.json Dutch_model.json
+# python3 create_summary_for_unseen_data_TNO_offline.py /Users/suzanverberne/Data/FORUM_DATA/PFM/PFM-master-b7a0eb79646b38321f9b937496cca71b62b89c5a/live_demo/gistsearch/data/bvn/bvn_input_data_for_elasticsearch_latest.json bvn_summarized_threads/bvn_summarized.json Dutch_model.json
+
+#
 
 #0. Read the config file with models and thresholds (json, 3rd argument)
 #1. Read json output of semantic search engine (query+result list), and extract threads
@@ -22,7 +24,6 @@ from scipy import sparse
 import scipy
 from scipy.linalg import norm
 from sklearn.metrics.pairwise import cosine_similarity
-import time
 
 json_filename = sys.argv[1]
 outfilename = sys.argv[2]
@@ -314,6 +315,7 @@ for thread in threads:
 	## skip if already outputted
 	if os.path.isfile(outfilename.replace(".json",thread['thread_id']+".json")):
 		print("skip: ", thread['thread_id'])
+		num += 1
 		continue
 	
 	print (num , ' of ', num_threads)
@@ -351,10 +353,16 @@ for thread in threads:
 	if not 'message' in thread_content:
 		continue
 	openingpost = thread_content['message']
-	text_of_openingpost = openingpost['text']
-	author_of_openingpost = openingpost['author']
-	timestamp_of_openingpost = openingpost['time']
-	postid_of_openingpost = openingpost['msg_id']
+	#text_of_openingpost = ""
+	#if 'text' in openingpost:
+	#	text_of_openingpost = openingpost['text']
+	#author_of_openingpost = ""
+	#if 'author' in openingpost:
+	#	author_of_openingpost = openingpost['author']
+	#timestamp_of_openingpost = openingpost['time']
+	postid_of_openingpost = ""
+	if 'msg_id' in openingpost:
+		postid_of_openingpost = openingpost['msg_id']
 	#print (postid_of_openingpost,text_of_openingpost)
 	openingpost_for_thread[threadid] = postid_of_openingpost
 
