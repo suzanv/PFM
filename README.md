@@ -7,7 +7,15 @@ This script summarizes all threads retrieved for a query. It reads the json outp
 python3 create_summary_for_unseen_data_TNO.py example_query_result_full_threads_improved.json example_query_result_full_threads.summary.json Dutch_model.json
 ```
 
- + 0. Read the config file with models and thresholds (json, 3rd argument)
+```
+python3 create_summary_for_unseen_data_TNO_offline.py /Users/suzanverberne/Data/FORUM_DATA/PFM/PFM-master-b7a0eb79646b38321f9b937496cca71b62b89c5a/live_demo/gistsearch/data/viva/viva_input_data_for_elasticsearch_latest.json viva_summarized_threads/viva_summarized.json Dutch_model.json
+```
+
+```
+python3 combine_threads.py viva_summarized_threads viva_forum_latest_summarized.json
+```
+
+ + 0. Read the config file with models (json, 3rd argument)
  + 1. Read json output of semantic search engine (query+result list), and extract threads
  + 2. For each thread in result list, extract post feats and sentence feats
  + 3. Standardize features
